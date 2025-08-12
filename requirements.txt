@@ -1,2 +1,6 @@
-Flask
 Gunicorn
+motor
+pandas
+bcrypt
+tabulate
+quart
