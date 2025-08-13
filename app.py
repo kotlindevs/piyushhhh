@@ -423,3 +423,5 @@ async def initialize_db():
 
     except Exception as e:
         print(f"Error during database initialization: {e}")
+        
+# run with : hypercorn --bind 0.0.0.0:$PORT app:app
