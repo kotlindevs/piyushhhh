@@ -425,4 +425,4 @@ async def initialize_db():
         print(f"Error during database initialization: {e}")
 
 if __name__ == '__main__':
-    app.run()
+    pass
