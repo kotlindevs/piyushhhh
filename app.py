@@ -1,16 +1,15 @@
-import asyncio
-from quart import Quart, render_template, request, redirect, url_for, session
+from quart import Quart, Response, request, session, jsonify
+from quart_cors import cors
 import motor.motor_asyncio as motor
 import urllib.parse as parser
 import bcrypt
-import re
 import os
 import datetime
 
 app = Quart(__name__)
+app = cors(app)
 app.secret_key = os.urandom(24)
 
-# MongoDB connection details
 uname = parser.quote_plus("Rajat")
 passwd = parser.quote_plus("2844")
 cluster = "cluster0.gpq2duh"
@@ -20,11 +19,10 @@ db = client["Contacts"]
 helplines = db["Helplines"]
 accounts = db["Accounts"]
 user_contacts_collection = db["User_contacts"]
-trash_collection = db["Trash"] # Collection for deleted contacts
+trash_collection = db["Trash"]
 
 
 async def check_user_async(username: str) -> bool:
-    """Checks if a username already exists in the database."""
     try:
         chk_user = await accounts.find_one({"Username": username})
         return chk_user is not None
@@ -34,7 +32,6 @@ async def check_user_async(username: str) -> bool:
 
 
 async def create_user_async(name, username, password, mobile):
-    """Creates a new user account."""
     try:
         hashed_password = bcrypt.hashpw(
             password.encode('utf-8'), bcrypt.gensalt())
@@ -45,14 +42,13 @@ async def create_user_async(name, username, password, mobile):
             "Contact": mobile
         }
         await accounts.insert_one(user)
-        return True
+        return True, "User created successfully."
     except Exception as e:
         print(f"Error while creating user: {e}")
-        return False
+        return False, "An error occurred while creating the user."
 
 
 async def validate_user_async(username, password):
-    """Validates user credentials."""
     try:
         user = await accounts.find_one({"Username": username})
         if user and bcrypt.checkpw(password.encode('utf-8'), user['Password']):
@@ -64,7 +60,6 @@ async def validate_user_async(username, password):
 
 
 async def get_contacts_async(username: str):
-    """Retrieves contacts for a given username."""
     try:
         user_contacts = await user_contacts_collection.find_one({"Username": username})
         if user_contacts:
@@ -76,7 +71,6 @@ async def get_contacts_async(username: str):
 
 
 async def get_contact_by_name_async(username: str, contact_name: str):
-    """Retrieves a specific contact by name."""
     try:
         user_contacts = await user_contacts_collection.find_one({"Username": username})
         if user_contacts:
@@ -90,7 +84,6 @@ async def get_contact_by_name_async(username: str, contact_name: str):
 
 
 async def add_contact_async(username, name, mobile, email, job_title, company):
-    """Adds a new contact to the user's list."""
     try:
         new_contact = {
             "Name": name,
@@ -111,7 +104,6 @@ async def add_contact_async(username, name, mobile, email, job_title, company):
 
 
 async def update_contact_async(username, old_name, new_name, mobile, email, job_title, company):
-    """Updates an existing contact."""
     try:
         user_doc = await user_contacts_collection.find_one({"Username": username})
         if user_doc:
@@ -137,7 +129,6 @@ async def update_contact_async(username, old_name, new_name, mobile, email, job_
 
 
 async def move_to_trash_async(username: str, contact_name: str):
-    """Moves a contact to the trash collection."""
     try:
         user_doc = await user_contacts_collection.find_one({"Username": username})
         if not user_doc:
@@ -148,7 +139,7 @@ async def move_to_trash_async(username: str, contact_name: str):
             if contact.get("Name") == contact_name:
                 contact_to_move = contact
                 break
-        
+
         if not contact_to_move:
             return False, "Contact not found."
 
@@ -170,7 +161,6 @@ async def move_to_trash_async(username: str, contact_name: str):
 
 
 async def get_trashed_contacts_async(username: str):
-    """Retrieves trashed contacts for a given username, sorted by deletion date."""
     try:
         cursor = trash_collection.find({"Username": username})
         return await cursor.sort("deleted_at", -1).to_list(length=None)
@@ -180,7 +170,6 @@ async def get_trashed_contacts_async(username: str):
 
 
 async def restore_contact_async(username: str, contact_name: str):
-    """Restores a contact from trash back to the user's contact list."""
     try:
         trashed_item = await trash_collection.find_one({"Username": username, "Contact.Name": contact_name})
         if not trashed_item:
@@ -202,7 +191,6 @@ async def restore_contact_async(username: str, contact_name: str):
 
 
 async def delete_permanently_async(username: str, contact_name: str):
-    """Permanently deletes a contact from the trash."""
     try:
         result = await trash_collection.delete_one({"Username": username, "Contact.Name": contact_name})
         if result.deleted_count == 0:
@@ -214,7 +202,6 @@ async def delete_permanently_async(username: str, contact_name: str):
 
 
 async def empty_trash_async(username: str):
-    """Permanently deletes all contacts from the trash for a given user."""
     try:
         await trash_collection.delete_many({"Username": username})
         return True, "Trash emptied successfully."
@@ -225,183 +212,291 @@ async def empty_trash_async(username: str):
 
 @app.route('/')
 async def index():
-    return await render_template('index.html')
+    return jsonify({"message": "Welcome to the Contacts API!"})
 
 
-@app.route('/register', methods=['GET', 'POST'])
-async def register():
-    if 'username' in session:
-        return redirect(url_for('contacts'))
+@app.route('/api/v1/signup', methods=['POST'])
+async def api_register():
+    try:
+        data = await request.get_json()
+        name = data.get('name')
+        username = data.get('username')
+        password = data.get('password')
+        mobile = data.get('mobile')
 
-    error = None
-    if request.method == 'POST':
-        form = await request.form
-        name = form.get('name')
-        username = form.get('username')
-        password = form.get('password')
-        mobile = form.get('mobile')
+        if not all([name, username, password, mobile]):
+            return jsonify({"error": "Missing required fields"}), 400
 
         if await check_user_async(username):
-            error = "Username already exists. Please choose a different one."
+            return jsonify({"error": "Username already exists. Please choose a different one."}), 409
+
+        success, message = await create_user_async(name, username, password, mobile)
+
+        if success:
+            return jsonify({"success": True, "message": "User registered successfully."}), 201
         else:
-            await create_user_async(name, username, password, mobile)
-            return redirect(url_for('login'))
+            return jsonify({"success": False, "error": message}), 500
 
-    return await render_template('register.html', error=error)
+    except Exception as e:
+        print(f"Error in registration API: {e}")
+        return jsonify({"success": False, "error": "An internal server error occurred."}), 500
 
 
-@app.route('/login', methods=['GET', 'POST'])
-async def login():
-    if 'username' in session:
-        return redirect(url_for('contacts'))
+@app.route('/api/v1/signin', methods=['POST'])
+async def api_login():
+    try:
+        data = await request.get_json()
+        username = data.get('username')
+        password = data.get('password')
 
-    error = None
-    if request.method == 'POST':
-        form = await request.form
-        username = form.get('username')
-        password = form.get('password')
+        if not all([username, password]):
+            return jsonify({"error": "Missing required fields"}), 400
 
         if await validate_user_async(username, password):
             session['username'] = username
-            return redirect(url_for('contacts'))
+
+            print(f"User '{username}' logged in successfully.")
+            return jsonify({"success": True, "message": "Login successful"}), 200
         else:
-            error = "Invalid username or password"
+            print(f"Failed login attempt for user '{username}'.")
+            return jsonify({"success": False, "error": "Invalid username or password"}), 401
 
-    return await render_template('index.html', error=error)
+    except Exception as e:
+        print(f"Error in login API: {e}")
+        return jsonify({"success": False, "error": "An internal server error occurred."}), 500
 
 
-@app.route('/contacts')
-async def contacts():
+@app.route('/api/v1/contacts', methods=['GET'])
+async def api_contacts():
+    try:
+        if 'username' not in session:
+            print("Attempt to fetch contacts without a logged-in user.")
+            return jsonify({"error": "User not logged in"}), 401
+
+        contacts_list = await get_contacts_async(session['username'])
+
+        if not contacts_list:
+            print(f"No contacts found for user '{session['username']}'.")
+        else:
+            print(
+                f"{len(contacts_list)} contacts found for user '{session['username']}'.")
+
+        return jsonify({"success": True, "contacts": contacts_list}), 200
+
+    except Exception as e:
+        print(f"Error fetching contacts in API: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+
+@app.route('/api/v1/create_contact', methods=['POST'])
+async def api_create_contact():
     if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    contacts_list = await get_contacts_async(session['username'])
-    return await render_template('contacts.html', contacts=contacts_list)
+        return jsonify({"error": "User not logged in"}), 401
 
+    try:
+        data = await request.get_json()
+        if not data:
+            print("Invalid JSON body received.")
+            return jsonify({"error": "Invalid request body, expected JSON"}), 400
 
-@app.route('/create_contact', methods=['GET', 'POST'])
-async def create_contact():
-    if 'username' not in session:
-        return redirect(url_for('login'))
+        name = data.get('name')
+        mobile = data.get('mobile')
+        email = data.get('email')
+        job_title = data.get('job_title')
+        company = data.get('company')
 
-    if request.method == 'POST':
-        form = await request.form
-        name = form.get('name')
-        mobile = form.get('mobile')
-        email = form.get('email')
-        job_title = form.get('job_title')
-        company = form.get('company')
-        
-        await add_contact_async(session['username'], name, mobile, email, job_title, company)
+        if not name or not isinstance(name, str) or len(name.strip()) == 0:
+            return jsonify({"error": "A valid 'name' (string) is required"}), 400
 
-        return redirect(url_for('contacts'))
+        if not mobile or not isinstance(mobile, str) or not mobile.isdigit():
+            return jsonify({"error": "A valid 'mobile' number (digits only) is required"}), 400
 
-    return await render_template('create_contact.html')
-
-
-@app.route('/edit_contact/<contact_name>', methods=['GET', 'POST'])
-async def edit_contact(contact_name):
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    contact = await get_contact_by_name_async(session['username'], contact_name)
-
-    if request.method == 'POST':
-        form = await request.form
-        old_contact_name = form.get('old_contact_name')
-        fname = form.get('fname')
-        lname = form.get('lname')
-        new_name = f"{fname} {lname}" if lname else fname
-        mobile = form.get('mobile')
-        email = form.get('email')
-        job_title = form.get('job_title')
-        company = form.get('company')
-
-        await update_contact_async(
+        await add_contact_async(
             session['username'],
-            old_contact_name,
-            new_name,
+            name,
             mobile,
             email,
             job_title,
             company
         )
 
-        return redirect(url_for('contacts'))
+        print(
+            f"Contact '{name}' created successfully for user '{session['username']}'.")
+        return jsonify({"success": True, "message": "Contact created successfully"}), 201
 
-    if contact:
-        name_parts = contact['Name'].split(' ', 1)
-        contact['fname'] = name_parts[0]
-        contact['lname'] = name_parts[1] if len(name_parts) > 1 else ''
-    else:
-        contact = {'fname': '', 'lname': '', 'Contact': '', 'Email': '', 'Job': '', 'Company': ''}
+    except TypeError as e:
+        print(f"Data type error in request: {e}")
+        return jsonify({"error": "Invalid data format provided."}), 400
 
-    return await render_template('edit_contact.html', contact=contact)
+    except Exception as e:
+        print(f"An unexpected error occurred while creating contact: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/remove_contact/<contact_name>')
-async def remove_contact(contact_name):
+# Fix Pending
+@app.route('/api/v1/edit_contact/<contact_name>', methods=['GET', 'PUT'])
+async def api_edit_contact(contact_name):
     if 'username' not in session:
-        return redirect(url_for('login'))
+        return jsonify({"error": "User not logged in"}), 401
 
-    await move_to_trash_async(session['username'], contact_name)
+    if request.method == 'GET':
+        try:
+            contact = await get_contact_by_name_async(session['username'], contact_name)
+            if contact:
+                return jsonify({"success": True, "contact": contact}), 200
+            else:
+                return jsonify({"error": "Contact not found"}), 404
+        except Exception as e:
+            print(f"An unexpected error occurred while fetching contact: {e}")
+            return jsonify({"error": "An internal server error occurred."}), 500
 
-    return redirect(url_for('contacts'))
+    elif request.method == 'PUT':
+        try:
+            data = await request.get_json()
+            if not data:
+                return jsonify({"error": "Invalid request body, expected JSON"}), 400
+
+            fname = data.get('fname')
+            lname = data.get('lname')
+            mobile = data.get('mobile')
+            email = data.get('email')
+            job_title = data.get('job_title')
+            company = data.get('company')
+
+            if not fname or not mobile:
+                return jsonify({"error": "First name and Mobile are required fields."}), 400
+
+            if not isinstance(mobile, str) or not mobile.isdigit():
+                return jsonify({"error": "Mobile number must be a string of digits."}), 400
+
+            new_name = f"{fname} {lname}" if lname else fname
+
+            await update_contact_async(
+                session['username'],
+                contact_name,
+                new_name,
+                mobile,
+                email,
+                job_title,
+                company
+            )
+
+            print(
+                f"Contact '{contact_name}' updated to '{new_name}' successfully.")
+            return jsonify({"success": True, "message": "Contact updated successfully"}), 200
+
+        except Exception as e:
+            print(f"An unexpected error occurred while editing contact: {e}")
+            return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/trash')
-async def trash_page():
+@app.route('/api/v1/remove_contact/<contact_name>', methods=['DELETE'])
+async def api_remove_contact(contact_name):
     if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    trashed_docs = await get_trashed_contacts_async(session['username'])
-    
-    # Format the 'deleted_at' timestamp for display
-    for doc in trashed_docs:
-        deleted_time = doc['deleted_at']
-        now = datetime.datetime.utcnow()
-        # Check if the date is today
-        if deleted_time.date() == now.date():
-            # Format as "Today, HH:MM AM/PM"
-            doc['deleted_at_formatted'] = f"Today, {deleted_time.strftime('%I:%M %p')}"
-        else:
-            # Format as "Mon Day, YYYY"
-            doc['deleted_at_formatted'] = deleted_time.strftime('%b %d, %Y')
+        print("Attempt to remove contact without a logged-in user.")
+        return jsonify({"error": "User not logged in"}), 401
 
-    return await render_template('trash.html', trashed_docs=trashed_docs)
+    try:
+        await move_to_trash_async(session['username'], contact_name)
+
+        print(
+            f"Contact '{contact_name}' removed successfully for user '{session['username']}'.")
+        return jsonify({"success": True, "message": "Contact removed successfully"}), 200
+
+    except Exception as e:
+        print(f"An unexpected error occurred while removing contact: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/restore_contact/<contact_name>')
-async def restore_contact(contact_name):
+@app.route('/api/v1/trash', methods=['GET'])
+async def api_get_trashed_contacts():
     if 'username' not in session:
-        return redirect(url_for('login'))
+        print("Attempt to access trash without a logged-in user.")
+        return jsonify({"error": "User not logged in"}), 401
 
-    await restore_contact_async(session['username'], contact_name)
-    return redirect(url_for('trash_page'))
+    try:
+        trashed_docs = await get_trashed_contacts_async(session['username'])
+
+        for doc in trashed_docs:
+            if '_id' in doc and doc['_id']:
+                doc['_id'] = str(doc['_id'])
+
+        return jsonify({"success": True, "trashed_contacts": trashed_docs}), 200
+
+    except Exception as e:
+        print(
+            f"An unexpected error occurred while fetching trashed contacts: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/delete_permanently/<contact_name>')
-async def delete_permanently(contact_name):
+@app.route('/api/v1/restore_contact/<contact_name>', methods=['POST'])
+async def api_restore_contact(contact_name):
     if 'username' not in session:
-        return redirect(url_for('login'))
+        print("Attempt to restore contact without a logged-in user.")
+        return jsonify({"error": "User not logged in"}), 401
 
-    await delete_permanently_async(session['username'], contact_name)
-    return redirect(url_for('trash_page'))
+    try:
+        await restore_contact_async(session['username'], contact_name)
+
+        print(
+            f"Contact '{contact_name}' restored successfully for user '{session['username']}'.")
+        return jsonify({"success": True, "message": "Contact restored successfully"}), 200
+
+    except Exception as e:
+        print(f"An unexpected error occurred while restoring contact: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/empty_trash')
-async def empty_trash():
+@app.route('/api/v1/delete_permanently/<contact_name>', methods=['DELETE'])
+async def api_delete_permanently(contact_name):
+
     if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    await empty_trash_async(session['username'])
-    return redirect(url_for('trash_page'))
+
+        print("Attempt to permanently delete contact without a logged-in user.")
+        return jsonify({"error": "User not logged in"}), 401
+
+    try:
+        await delete_permanently_async(session['username'], contact_name)
+
+        print(
+            f"Contact '{contact_name}' permanently deleted successfully for user '{session['username']}'.")
+        return jsonify({"success": True, "message": "Contact permanently deleted successfully"}), 200
+
+    except Exception as e:
+        print(
+            f"An unexpected error occurred while permanently deleting contact: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/logout')
-async def logout():
-    session.pop('username', None)
-    return redirect(url_for('index'))
+@app.route('/api/v1/empty_trash', methods=['DELETE'])
+async def api_empty_trash():
+
+    if 'username' not in session:
+        print("Attempt to empty trash without a logged-in user.")
+        return jsonify({"error": "User not logged in"}), 401
+
+    try:
+        await empty_trash_async(session['username'])
+
+        print(f"Trash emptied successfully for user '{session['username']}'.")
+        return jsonify({"success": True, "message": "Trash emptied successfully"}), 200
+
+    except Exception as e:
+        print(f"An unexpected error occurred while emptying trash: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+
+@app.route('/api/v1/logout', methods=['POST'])
+async def api_logout():
+    try:
+        session.pop('username', None)
+
+        print("User logged out successfully.")
+        return jsonify({"success": True, "message": "Logged out successfully"}), 200
+
+    except Exception as e:
+        print(f"An unexpected error occurred while logging out: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 
 @app.before_serving
@@ -423,5 +518,3 @@ async def initialize_db():
 
     except Exception as e:
         print(f"Error during database initialization: {e}")
-        
-# run with : hypercorn --bind 0.0.0.0:$PORT app:app
