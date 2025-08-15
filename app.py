@@ -7,7 +7,7 @@ import os
 import datetime
 
 app = Quart(__name__)
-app = cors(app, allow_origin="https://pycontacts.onrender.com/", allow_credentials=True)
+app = cors(app)
 app.secret_key = os.urandom(24)
 
 uname = parser.quote_plus("Rajat")
