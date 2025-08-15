@@ -287,6 +287,25 @@ async def api_contacts():
         print(f"Error fetching contacts in API: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
+@app.route('/api/v1/user', methods=['GET'])
+async def api_get_user_profile():
+    if 'username' not in session:
+        return jsonify({"error": "User not logged in"}), 401
+
+    try:
+        user = await accounts.find_one({"Username": session['username']})
+        if user:
+            user_info = {
+                "name": user.get("Name"),
+                "username": user.get("Username"),
+                "mobile": user.get("Contact")
+            }
+            return jsonify({"success": True, "user": user_info}), 200
+        else:
+            return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        print(f"Error fetching user profile: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.route('/api/v1/create_contact', methods=['POST'])
 async def api_create_contact():
