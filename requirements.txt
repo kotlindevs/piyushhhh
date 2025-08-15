@@ -1,6 +1,5 @@
 hypercorn
 motor
-pandas
 bcrypt
-tabulate
 quart
+quart_cors
