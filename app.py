@@ -537,3 +537,20 @@ async def initialize_db():
 
     except Exception as e:
         print(f"Error during database initialization: {e}")
+
+@app.route('/api/v1/check_username', methods=['POST'])
+async def api_check_username():
+    try:
+        data = await request.get_json()
+        username = data.get('username')
+        if not username:
+            return jsonify({"error": "Missing 'username' field"}), 400
+
+        exists = await check_user_async(username)
+        if exists:
+            return jsonify({"exists": True, "message": "Username already taken"}), 200
+        else:
+            return jsonify({"exists": False, "message": "Username is available"}), 200
+    except Exception as e:
+        print(f"Error in check_username API: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
