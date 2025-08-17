@@ -1,10 +1,12 @@
-from quart import Quart, Response, request, session, jsonify
+from quart import Quart, Response, request, session, jsonify, g
 from quart_cors import cors
 import motor.motor_asyncio as motor
 import urllib.parse as parser
 import bcrypt
 import secrets
 import datetime
+import jwt
+from functools import wraps
 
 app = Quart(__name__)
 app = cors(
@@ -13,9 +15,10 @@ app = cors(
     allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Origin"],
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_origin="https://pycontacts.onrender.com/"
-    )
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.secret_key = secrets.token_urlsafe(24)
+)
+
+app.config['JWT_SECRET_KEY'] = secrets.token_urlsafe(32)
+app.config['JWT_EXPIRATION_DELTA'] = datetime.timedelta(hours=1)
 
 uname = parser.quote_plus("Rajat")
 passwd = parser.quote_plus("2844")
@@ -27,6 +30,32 @@ helplines = db["Helplines"]
 accounts = db["Accounts"]
 user_contacts_collection = db["User_contacts"]
 trash_collection = db["Trash"]
+
+def jwt_required(f):
+    @wraps(f)
+    async def decorated_function(*args, **kwargs):
+        token = None
+
+        if 'Authorization' in request.headers:
+            token = request.headers['Authorization'].split(' ')[1]
+        
+        if not token:
+            return jsonify({'error': 'Token is missing!'}), 401
+
+        try:
+            payload = jwt.decode(
+                token, 
+                app.config['JWT_SECRET_KEY'], 
+                algorithms=["HS256"]
+            )
+            g.username = payload['username']
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+
+        return await f(*args, **kwargs)
+    return decorated_function
 
 
 async def check_user_async(username: str) -> bool:
@@ -260,10 +289,15 @@ async def api_login():
             return jsonify({"error": "Missing required fields"}), 400
 
         if await validate_user_async(username, password):
-            session['username'] = username
+            payload = {
+                'username': username,
+                'exp': datetime.datetime.now(datetime.timezone.utc) + app.config['JWT_EXPIRATION_DELTA']
+            }
 
-            print(f"User '{username}' logged in successfully.")
-            return jsonify({"success": True, "message": "Login successful"}), 200
+            token = jwt.encode(payload, app.config['JWT_SECRET_KEY'], algorithm='HS256')
+            
+            print(f"User '{username}' logged in successfully, JWT issued.")
+            return jsonify({"success": True, "message": "Login successful", "token": token}), 200
         else:
             print(f"Failed login attempt for user '{username}'.")
             return jsonify({"success": False, "error": "Invalid username or password"}), 401
@@ -274,19 +308,15 @@ async def api_login():
 
 
 @app.route('/api/v1/contacts', methods=['GET'])
+@jwt_required
 async def api_contacts():
     try:
-        if 'username' not in session:
-            print("Attempt to fetch contacts without a logged-in user.")
-            return jsonify({"error": "User not logged in"}), 401
-
-        contacts_list = await get_contacts_async(session['username'])
+        contacts_list = await get_contacts_async(g.username)
 
         if not contacts_list:
-            print(f"No contacts found for user '{session['username']}'.")
+            print(f"No contacts found for user '{g.username}'.")
         else:
-            print(
-                f"{len(contacts_list)} contacts found for user '{session['username']}'.")
+            print(f"{len(contacts_list)} contacts found for user '{g.username}'.")
 
         return jsonify({"success": True, "contacts": contacts_list}), 200
 
@@ -294,13 +324,12 @@ async def api_contacts():
         print(f"Error fetching contacts in API: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
-@app.route('/api/v1/user', methods=['GET'])
-async def api_get_user_profile():
-    if 'username' not in session:
-        return jsonify({"error": "User not logged in"}), 401
 
+@app.route('/api/v1/user', methods=['GET'])
+@jwt_required
+async def api_get_user_profile():
     try:
-        user = await accounts.find_one({"Username": session['username']})
+        user = await accounts.find_one({"Username": g.username})
         if user:
             user_info = {
                 "name": user.get("Name"),
@@ -314,11 +343,10 @@ async def api_get_user_profile():
         print(f"Error fetching user profile: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
-@app.route('/api/v1/create_contact', methods=['POST'])
-async def api_create_contact():
-    if 'username' not in session:
-        return jsonify({"error": "User not logged in"}), 401
 
+@app.route('/api/v1/create_contact', methods=['POST'])
+@jwt_required
+async def api_create_contact():
     try:
         data = await request.get_json()
         if not data:
@@ -338,7 +366,7 @@ async def api_create_contact():
             return jsonify({"error": "A valid 'mobile' number (digits only) is required"}), 400
 
         await add_contact_async(
-            session['username'],
+            g.username,
             name,
             mobile,
             email,
@@ -346,8 +374,7 @@ async def api_create_contact():
             company
         )
 
-        print(
-            f"Contact '{name}' created successfully for user '{session['username']}'.")
+        print(f"Contact '{name}' created successfully for user '{g.username}'.")
         return jsonify({"success": True, "message": "Contact created successfully"}), 201
 
     except TypeError as e:
@@ -359,15 +386,12 @@ async def api_create_contact():
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
-# Fix Pending
 @app.route('/api/v1/edit_contact/<contact_name>', methods=['GET', 'PUT'])
+@jwt_required
 async def api_edit_contact(contact_name):
-    if 'username' not in session:
-        return jsonify({"error": "User not logged in"}), 401
-
     if request.method == 'GET':
         try:
-            contact = await get_contact_by_name_async(session['username'], contact_name)
+            contact = await get_contact_by_name_async(g.username, contact_name)
             if contact:
                 return jsonify({"success": True, "contact": contact}), 200
             else:
@@ -398,7 +422,7 @@ async def api_edit_contact(contact_name):
             new_name = f"{fname} {lname}" if lname else fname
 
             await update_contact_async(
-                session['username'],
+                g.username,
                 contact_name,
                 new_name,
                 mobile,
@@ -407,8 +431,7 @@ async def api_edit_contact(contact_name):
                 company
             )
 
-            print(
-                f"Contact '{contact_name}' updated to '{new_name}' successfully.")
+            print(f"Contact '{contact_name}' updated to '{new_name}' successfully.")
             return jsonify({"success": True, "message": "Contact updated successfully"}), 200
 
         except Exception as e:
@@ -417,16 +440,12 @@ async def api_edit_contact(contact_name):
 
 
 @app.route('/api/v1/remove_contact/<contact_name>', methods=['DELETE'])
+@jwt_required
 async def api_remove_contact(contact_name):
-    if 'username' not in session:
-        print("Attempt to remove contact without a logged-in user.")
-        return jsonify({"error": "User not logged in"}), 401
-
     try:
-        await move_to_trash_async(session['username'], contact_name)
+        await move_to_trash_async(g.username, contact_name)
 
-        print(
-            f"Contact '{contact_name}' removed successfully for user '{session['username']}'.")
+        print(f"Contact '{contact_name}' removed successfully for user '{g.username}'.")
         return jsonify({"success": True, "message": "Contact removed successfully"}), 200
 
     except Exception as e:
@@ -435,13 +454,10 @@ async def api_remove_contact(contact_name):
 
 
 @app.route('/api/v1/trash', methods=['GET'])
+@jwt_required
 async def api_get_trashed_contacts():
-    if 'username' not in session:
-        print("Attempt to access trash without a logged-in user.")
-        return jsonify({"error": "User not logged in"}), 401
-
     try:
-        trashed_docs = await get_trashed_contacts_async(session['username'])
+        trashed_docs = await get_trashed_contacts_async(g.username)
 
         for doc in trashed_docs:
             if '_id' in doc and doc['_id']:
@@ -450,22 +466,17 @@ async def api_get_trashed_contacts():
         return jsonify({"success": True, "trashed_contacts": trashed_docs}), 200
 
     except Exception as e:
-        print(
-            f"An unexpected error occurred while fetching trashed contacts: {e}")
+        print(f"An unexpected error occurred while fetching trashed contacts: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
 @app.route('/api/v1/restore_contact/<contact_name>', methods=['POST'])
+@jwt_required
 async def api_restore_contact(contact_name):
-    if 'username' not in session:
-        print("Attempt to restore contact without a logged-in user.")
-        return jsonify({"error": "User not logged in"}), 401
-
     try:
-        await restore_contact_async(session['username'], contact_name)
+        await restore_contact_async(g.username, contact_name)
 
-        print(
-            f"Contact '{contact_name}' restored successfully for user '{session['username']}'.")
+        print(f"Contact '{contact_name}' restored successfully for user '{g.username}'.")
         return jsonify({"success": True, "message": "Contact restored successfully"}), 200
 
     except Exception as e:
@@ -474,54 +485,30 @@ async def api_restore_contact(contact_name):
 
 
 @app.route('/api/v1/delete_permanently/<contact_name>', methods=['DELETE'])
+@jwt_required
 async def api_delete_permanently(contact_name):
-
-    if 'username' not in session:
-
-        print("Attempt to permanently delete contact without a logged-in user.")
-        return jsonify({"error": "User not logged in"}), 401
-
     try:
-        await delete_permanently_async(session['username'], contact_name)
+        await delete_permanently_async(g.username, contact_name)
 
-        print(
-            f"Contact '{contact_name}' permanently deleted successfully for user '{session['username']}'.")
+        print(f"Contact '{contact_name}' permanently deleted successfully for user '{g.username}'.")
         return jsonify({"success": True, "message": "Contact permanently deleted successfully"}), 200
 
     except Exception as e:
-        print(
-            f"An unexpected error occurred while permanently deleting contact: {e}")
+        print(f"An unexpected error occurred while permanently deleting contact: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
 @app.route('/api/v1/empty_trash', methods=['DELETE'])
+@jwt_required
 async def api_empty_trash():
-
-    if 'username' not in session:
-        print("Attempt to empty trash without a logged-in user.")
-        return jsonify({"error": "User not logged in"}), 401
-
     try:
-        await empty_trash_async(session['username'])
+        await empty_trash_async(g.username)
 
-        print(f"Trash emptied successfully for user '{session['username']}'.")
+        print(f"Trash emptied successfully for user '{g.username}'.")
         return jsonify({"success": True, "message": "Trash emptied successfully"}), 200
 
     except Exception as e:
         print(f"An unexpected error occurred while emptying trash: {e}")
-        return jsonify({"error": "An internal server error occurred."}), 500
-
-
-@app.route('/api/v1/logout', methods=['POST'])
-async def api_logout():
-    try:
-        session.pop('username', None)
-
-        print("User logged out successfully.")
-        return jsonify({"success": True, "message": "Logged out successfully"}), 200
-
-    except Exception as e:
-        print(f"An unexpected error occurred while logging out: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
@@ -541,9 +528,9 @@ async def initialize_db():
             print("Seeding complete.")
         else:
             print("Database already contains helpline data.")
-
     except Exception as e:
         print(f"Error during database initialization: {e}")
+
 
 @app.route('/api/v1/check_username', methods=['POST'])
 async def api_check_username():
@@ -561,3 +548,9 @@ async def api_check_username():
     except Exception as e:
         print(f"Error in check_username API: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
+        
+@app.route('/api/v1/logout', methods=['POST'])
+@jwt_required
+async def api_logout():
+    print(f"User '{g.username}' logged out successfully by client-side token removal.")
+    return jsonify({"success": True, "message": "Logged out successfully"}), 200
