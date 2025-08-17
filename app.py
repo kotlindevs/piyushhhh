@@ -224,7 +224,7 @@ async def api_register():
         password = data.get('password')
         mobile = data.get('mobile')
 
-        if not all([name, username, password, mobile]):
+        if not all([name, username, password]):
             return jsonify({"error": "Missing required fields"}), 400
 
         if await check_user_async(username):
