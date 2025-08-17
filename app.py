@@ -3,12 +3,19 @@ from quart_cors import cors
 import motor.motor_asyncio as motor
 import urllib.parse as parser
 import bcrypt
-import os
+import secrets
 import datetime
 
 app = Quart(__name__)
-app = cors(app)
-app.secret_key = os.urandom(24)
+app = cors(
+    app, 
+    allow_credentials=True, 
+    allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Origin"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_origin="https://pycontacts.onrender.com/"
+    )
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.secret_key = secrets.token_urlsafe(24)
 
 uname = parser.quote_plus("Rajat")
 passwd = parser.quote_plus("2844")
