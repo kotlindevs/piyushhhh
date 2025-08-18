@@ -84,12 +84,12 @@ async def create_user_async(name, username, password, mobile):
         return False, "An error occurred while creating the user."
 
 
-async def validate_user_async(username, password):
+async def validate_user_async(username, password) -> bool:
     try:
         user = await accounts.find_one({"Username": username})
         if user and bcrypt.checkpw(password.encode('utf-8'), user['Password']):
             return True
-        return False
+        return True if user else False
     except Exception as e:
         print(f"Error while validating user: {e}")
         return False
