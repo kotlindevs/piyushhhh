@@ -123,7 +123,7 @@ async def get_contact_by_id_async(username: str, contact_id: str):
         return None
 
 
-async def add_contact_async(username, name, mobile, email, job_title, company):
+async def add_contact_async(username, name, mobile, email, job_title, company, datetime):
     try:
         new_contact = {
             "_id": ObjectId(),
@@ -131,7 +131,8 @@ async def add_contact_async(username, name, mobile, email, job_title, company):
             "Contact": mobile,
             "Email": email,
             "Job": job_title,
-            "Company": company
+            "Company": company,
+            "DateTime": datetime
         }
         await user_contacts_collection.update_one(
             {"Username": username},
@@ -447,6 +448,7 @@ async def api_create_contact():
         email = data.get('email')
         job_title = data.get('job_title')
         company = data.get('company')
+        dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         if not name or not isinstance(name, str) or len(name.strip()) == 0:
             return jsonify({"error": "A valid 'name' (string) is required"}), 400
@@ -460,7 +462,8 @@ async def api_create_contact():
             mobile,
             email,
             job_title,
-            company
+            company,
+            dt
         )
         print(
             f"Contact '{name}' created successfully for user '{g.username}'.")
