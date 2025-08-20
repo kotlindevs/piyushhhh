@@ -31,6 +31,7 @@ db = client["Contacts"]
 helplines = db["Helplines"]
 accounts = db["Accounts"]
 user_contacts_collection = db["User_contacts"]
+labels_collection = db["Labels"]
 trash_collection = db["Trash"]
 
 
@@ -168,6 +169,36 @@ async def update_contact_async(username, contact_id, new_name, mobile, email, jo
         print(f"Error updating contact: {e}")
         return False, "An error occurred while updating the contact."
 
+async def create_label_async(username: str, label_name: str):
+    try:
+        new_label = {
+            "Username": username,
+            "LabelName": label_name
+        }
+        await labels_collection.insert_one(new_label)
+        return True, "Label created successfully."
+    except Exception as e:
+        print(f"Error creating label: {e}")
+        return False, "An error occurred while creating the label."
+
+async def get_labels_async(username: str):
+    try:
+        user_labels = await labels_collection.find({"Username": username}).to_list(length=None)
+        return [label["LabelName"] for label in user_labels]
+    except Exception as e:
+        print(f"Error getting labels: {e}")
+        return []
+
+async def delete_label_async(username: str, label_name: str):
+    try:
+        result = await labels_collection.delete_one({"Username": username, "LabelName": label_name})
+        if result.deleted_count == 1:
+            return True, "Label deleted successfully."
+        else:
+            return False, "Label not found."
+    except Exception as e:
+        print(f"Error deleting label: {e}")
+        return False, "An error occurred while deleting the label."
 
 async def move_to_trash_async(username: str, contact_id: str):
     try:
@@ -556,6 +587,58 @@ async def api_empty_trash():
         print(f"An unexpected error occurred while emptying trash: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
+@app.route('/api/v1/create_label', methods=['POST'])
+@jwt_required
+async def api_create_label():
+    try:
+        data = await request.get_json()
+        label_name = data.get('label_name')
+        if not label_name:
+            return jsonify({"error": "Missing 'label_name' field"}), 400
+
+        success, message = await create_label_async(g.username, label_name)
+        if success:
+            print(f"Label '{label_name}' created successfully for user '{g.username}'.")
+            return jsonify({"success": True, "message": message}), 201
+        else:
+            return jsonify({"error": message}), 400
+    except Exception as e:
+        print(f"An unexpected error occurred while creating label: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+@app.route('/api/v1/get_labels', methods=['GET'])
+@jwt_required
+async def api_get_labels():
+    try:
+        labels = await get_labels_async(g.username)
+        if labels:
+            print(f"Labels retrieved successfully for user '{g.username}'.")
+            return jsonify({"success": True, "labels": labels}), 200
+        else:
+            print(f"No labels found for user '{g.username}'.")
+            return jsonify({"success": True, "labels": []}), 200
+    except Exception as e:
+        print(f"An unexpected error occurred while fetching labels: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+@app.route('/api/v1/delete_label', methods=['DELETE'])
+@jwt_required
+async def api_delete_label():
+    try:
+        data = await request.get_json()
+        label_name = data.get('label_name')
+        if not label_name:
+            return jsonify({"error": "Missing 'label_name' field"}), 400
+
+        success, message = await delete_label_async(g.username, label_name)
+        if success:
+            print(f"Label '{label_name}' deleted successfully for user '{g.username}'.")
+            return jsonify({"success": True, "message": message}), 200
+        else:
+            return jsonify({"error": message}), 404
+    except Exception as e:
+        print(f"An unexpected error occurred while deleting label: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.before_serving
 async def initialize_db():
