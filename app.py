@@ -210,8 +210,19 @@ async def move_to_trash_async(username: str, contact_id: str):
 
 async def get_trashed_contacts_async(username: str):
     try:
-        cursor = trash_collection.find({"Username": username})
-        return await cursor.sort("deleted_at", -1).to_list(length=None)
+        trashed_docs = []
+        async for doc in trash_collection.find({"Username": username}).sort("deleted_at", -1):
+            if '_id' in doc and doc['_id']:
+                doc['_id'] = str(doc['_id'])
+            if 'contact_id' in doc and doc['contact_id']:
+                doc['contact_id'] = str(doc['contact_id'])
+
+            if 'ContactDetails' in doc and 'ContactDetails' in doc:
+                contact_details = doc['ContactDetails']
+                if '_id' in contact_details and contact_details['_id']:
+                    contact_details['_id'] = str(contact_details['_id'])
+            trashed_docs.append(doc)
+        return trashed_docs
     except Exception as e:
         print(f"Error getting trashed contacts: {e}")
         return []
@@ -491,15 +502,7 @@ async def api_remove_contact(contact_id):
 async def api_get_trashed_contacts():
     try:
         trashed_docs = await get_trashed_contacts_async(g.username)
-
-        for doc in trashed_docs:
-            if '_id' in doc and doc['_id']:
-                doc['_id'] = str(doc['_id'])
-            if 'contact_id' in doc and doc['contact_id']:
-                doc['contact_id'] = str(doc['contact_id'])
-
         return jsonify({"success": True, "trashed_contacts": trashed_docs}), 200
-
     except Exception as e:
         print(
             f"An unexpected error occurred while fetching trashed contacts: {e}")
