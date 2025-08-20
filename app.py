@@ -1,3 +1,4 @@
+from bson.objectid import ObjectId
 from quart import Quart, Response, request, session, jsonify, g
 from quart_cors import cors
 import motor.motor_asyncio as motor
@@ -10,15 +11,16 @@ from functools import wraps
 
 app = Quart(__name__)
 app = cors(
-    app, 
-    allow_credentials=True, 
-    allow_headers=["Content-Type", "Authorization", "Access-Control-Allow-Origin"],
+    app,
+    allow_credentials=True,
+    allow_headers=["Content-Type", "Authorization",
+                   "Access-Control-Allow-Origin"],
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_origin="https://pycontacts.onrender.com/"
 )
 
 app.config['JWT_SECRET_KEY'] = secrets.token_urlsafe(32)
-app.config['JWT_EXPIRATION_DELTA'] = datetime.timedelta(hours=1)
+app.config['JWT_EXPIRATION_DELTA'] = datetime.timedelta(hours=168)
 
 uname = parser.quote_plus("Rajat")
 passwd = parser.quote_plus("2844")
@@ -31,21 +33,21 @@ accounts = db["Accounts"]
 user_contacts_collection = db["User_contacts"]
 trash_collection = db["Trash"]
 
+
 def jwt_required(f):
     @wraps(f)
     async def decorated_function(*args, **kwargs):
         token = None
-
         if 'Authorization' in request.headers:
             token = request.headers['Authorization'].split(' ')[1]
-        
+
         if not token:
             return jsonify({'error': 'Token is missing!'}), 401
 
         try:
             payload = jwt.decode(
-                token, 
-                app.config['JWT_SECRET_KEY'], 
+                token,
+                app.config['JWT_SECRET_KEY'],
                 algorithms=["HS256"]
             )
             g.username = payload['username']
@@ -67,7 +69,7 @@ async def check_user_async(username: str) -> bool:
         return False
 
 
-async def create_user_async(name, username, password, mobile):
+async def create_user_async(name: str, username: str, password: str, mobile: str):
     try:
         hashed_password = bcrypt.hashpw(
             password.encode('utf-8'), bcrypt.gensalt())
@@ -84,12 +86,12 @@ async def create_user_async(name, username, password, mobile):
         return False, "An error occurred while creating the user."
 
 
-async def validate_user_async(username, password) -> bool:
+async def validate_user_async(username: str, password: str) -> bool:
     try:
         user = await accounts.find_one({"Username": username})
         if user and bcrypt.checkpw(password.encode('utf-8'), user['Password']):
             return True
-        return True if user else False
+        return False
     except Exception as e:
         print(f"Error while validating user: {e}")
         return False
@@ -106,12 +108,13 @@ async def get_contacts_async(username: str):
         return []
 
 
-async def get_contact_by_name_async(username: str, contact_name: str):
+async def get_contact_by_id_async(username: str, contact_id: str):
     try:
+        obj_id = ObjectId(contact_id)
         user_contacts = await user_contacts_collection.find_one({"Username": username})
         if user_contacts:
             for contact in user_contacts.get("Contacts", []):
-                if contact.get("Name") == contact_name:
+                if contact.get("_id") == obj_id:
                     return contact
         return None
     except Exception as e:
@@ -122,6 +125,7 @@ async def get_contact_by_name_async(username: str, contact_name: str):
 async def add_contact_async(username, name, mobile, email, job_title, company):
     try:
         new_contact = {
+            "_id": ObjectId(),
             "Name": name,
             "Contact": mobile,
             "Email": email,
@@ -139,32 +143,38 @@ async def add_contact_async(username, name, mobile, email, job_title, company):
         return False, "An error occurred while adding the contact."
 
 
-async def update_contact_async(username, old_name, new_name, mobile, email, job_title, company):
+async def update_contact_async(username, contact_id, new_name, mobile, email, job_title, company):
     try:
-        user_doc = await user_contacts_collection.find_one({"Username": username})
-        if user_doc:
-            contacts = user_doc.get("Contacts", [])
-            for contact in contacts:
-                if contact.get("Name") == old_name:
-                    contact['Name'] = new_name
-                    contact['Contact'] = mobile
-                    contact['Email'] = email
-                    contact['Job'] = job_title
-                    contact['Company'] = company
-                    break
+        obj_id = ObjectId(contact_id)
 
-            await user_contacts_collection.update_one(
-                {"Username": username},
-                {"$set": {"Contacts": contacts}}
-            )
+        update_fields = {
+            "Contacts.$.Name": new_name,
+            "Contacts.$.Contact": mobile,
+            "Contacts.$.Email": email,
+            "Contacts.$.Job": job_title,
+            "Contacts.$.Company": company
+        }
+
+        result = await user_contacts_collection.update_one(
+            {"Username": username, "Contacts._id": obj_id},
+            {"$set": update_fields}
+        )
+
+        if result.modified_count == 1:
             return True, "Contact updated successfully."
-        return False, "Contact not found."
+        else:
+            return False, "Contact not found or no changes made."
     except Exception as e:
         print(f"Error updating contact: {e}")
         return False, "An error occurred while updating the contact."
 
 
-async def move_to_trash_async(username: str, contact_name: str):
+async def move_to_trash_async(username: str, contact_id: str):
+    try:
+        obj_id = ObjectId(contact_id)
+    except Exception:
+        return False, "Invalid contact ID format."
+
     try:
         user_doc = await user_contacts_collection.find_one({"Username": username})
         if not user_doc:
@@ -172,25 +182,27 @@ async def move_to_trash_async(username: str, contact_name: str):
 
         contact_to_move = None
         for contact in user_doc.get("Contacts", []):
-            if contact.get("Name") == contact_name:
+            if contact.get("_id") == obj_id:
                 contact_to_move = contact
                 break
 
         if not contact_to_move:
-            return False, "Contact not found."
+            return False, "Contact not found in main list."
 
         trash_item = {
+            "contact_id": obj_id,
             "Username": username,
-            "Contact": contact_to_move,
+            "ContactDetails": contact_to_move,
             "deleted_at": datetime.datetime.utcnow()
         }
         await trash_collection.insert_one(trash_item)
 
         await user_contacts_collection.update_one(
             {"Username": username},
-            {"$pull": {"Contacts": {"Name": contact_name}}}
+            {"$pull": {"Contacts": {"_id": obj_id}}}
         )
         return True, "Contact moved to trash successfully."
+
     except Exception as e:
         print(f"Error moving contact to trash: {e}")
         return False, "An error occurred while moving the contact to trash."
@@ -205,30 +217,40 @@ async def get_trashed_contacts_async(username: str):
         return []
 
 
-async def restore_contact_async(username: str, contact_name: str):
+async def restore_contact_async(username, contact_id):
     try:
-        trashed_item = await trash_collection.find_one({"Username": username, "Contact.Name": contact_name})
+        obj_id = ObjectId(contact_id)
+    except Exception:
+        return False, "Invalid contact ID format."
+
+    try:
+        trashed_item = await trash_collection.find_one({"Username": username, "contact_id": obj_id})
         if not trashed_item:
             return False, "Contact not found in trash."
 
-        contact_to_restore = trashed_item['Contact']
+        contact_to_restore = trashed_item['ContactDetails']
 
         await user_contacts_collection.update_one(
             {"Username": username},
-            {"$push": {"Contacts": contact_to_restore}},
-            upsert=True
+            {"$push": {"Contacts": contact_to_restore}}
         )
 
         await trash_collection.delete_one({"_id": trashed_item["_id"]})
+
         return True, "Contact restored successfully."
     except Exception as e:
         print(f"Error restoring contact: {e}")
         return False, "An error occurred while restoring the contact."
 
 
-async def delete_permanently_async(username: str, contact_name: str):
+async def delete_permanently_async(username: str, contact_id: str):
     try:
-        result = await trash_collection.delete_one({"Username": username, "Contact.Name": contact_name})
+        obj_id = ObjectId(contact_id)
+    except Exception:
+        return False, "Invalid contact ID format."
+
+    try:
+        result = await trash_collection.delete_one({"contact_id": obj_id, "Username": username})
         if result.deleted_count == 0:
             return False, "Contact not found in trash."
         return True, "Contact permanently deleted."
@@ -293,9 +315,8 @@ async def api_login():
                 'username': username,
                 'exp': datetime.datetime.now(datetime.timezone.utc) + app.config['JWT_EXPIRATION_DELTA']
             }
-
-            token = jwt.encode(payload, app.config['JWT_SECRET_KEY'], algorithm='HS256')
-            
+            token = jwt.encode(
+                payload, app.config['JWT_SECRET_KEY'], algorithm='HS256')
             print(f"User '{username}' logged in successfully, JWT issued.")
             return jsonify({"success": True, "message": "Login successful", "token": token}), 200
         else:
@@ -312,6 +333,10 @@ async def api_login():
 async def api_contacts():
     try:
         contacts_list = await get_contacts_async(g.username)
+        # Convert ObjectId to string for JSON serialization
+        for contact in contacts_list:
+            if '_id' in contact and contact['_id']:
+                contact['_id'] = str(contact['_id'])
 
         if not contacts_list:
             print(f"No contacts found for user '{g.username}'.")
@@ -373,8 +398,8 @@ async def api_create_contact():
             job_title,
             company
         )
-
-        print(f"Contact '{name}' created successfully for user '{g.username}'.")
+        print(
+            f"Contact '{name}' created successfully for user '{g.username}'.")
         return jsonify({"success": True, "message": "Contact created successfully"}), 201
 
     except TypeError as e:
@@ -386,13 +411,16 @@ async def api_create_contact():
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/api/v1/edit_contact/<contact_name>', methods=['GET', 'PUT'])
+@app.route('/api/v1/edit_contact/<contact_id>', methods=['GET', 'PUT'])
 @jwt_required
-async def api_edit_contact(contact_name):
+async def api_edit_contact(contact_id):
     if request.method == 'GET':
         try:
-            contact = await get_contact_by_name_async(g.username, contact_name)
+            contact = await get_contact_by_id_async(g.username, contact_id)
             if contact:
+                # Convert ObjectId to string for JSON serialization
+                if '_id' in contact and contact['_id']:
+                    contact['_id'] = str(contact['_id'])
                 return jsonify({"success": True, "contact": contact}), 200
             else:
                 return jsonify({"error": "Contact not found"}), 404
@@ -421,33 +449,38 @@ async def api_edit_contact(contact_name):
 
             new_name = f"{fname} {lname}" if lname else fname
 
-            await update_contact_async(
+            success, message = await update_contact_async(
                 g.username,
-                contact_name,
+                contact_id,
                 new_name,
                 mobile,
                 email,
                 job_title,
                 company
             )
-
-            print(f"Contact '{contact_name}' updated to '{new_name}' successfully.")
-            return jsonify({"success": True, "message": "Contact updated successfully"}), 200
+            if success:
+                print(
+                    f"Contact with ID '{contact_id}' updated to '{new_name}' successfully.")
+                return jsonify({"success": True, "message": message}), 200
+            else:
+                return jsonify({"error": message}), 404
 
         except Exception as e:
             print(f"An unexpected error occurred while editing contact: {e}")
             return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/api/v1/remove_contact/<contact_name>', methods=['DELETE'])
+@app.route('/api/v1/remove_contact/<contact_id>', methods=['DELETE'])
 @jwt_required
-async def api_remove_contact(contact_name):
+async def api_remove_contact(contact_id):
     try:
-        await move_to_trash_async(g.username, contact_name)
-
-        print(f"Contact '{contact_name}' removed successfully for user '{g.username}'.")
-        return jsonify({"success": True, "message": "Contact removed successfully"}), 200
-
+        success, message = await move_to_trash_async(g.username, contact_id)
+        if success:
+            print(
+                f"Contact with _id '{contact_id}' removed to trash successfully for user '{g.username}'.")
+            return jsonify({"success": True, "message": message}), 200
+        else:
+            return jsonify({"error": message}), 404
     except Exception as e:
         print(f"An unexpected error occurred while removing contact: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
@@ -462,39 +495,47 @@ async def api_get_trashed_contacts():
         for doc in trashed_docs:
             if '_id' in doc and doc['_id']:
                 doc['_id'] = str(doc['_id'])
+            if 'contact_id' in doc and doc['contact_id']:
+                doc['contact_id'] = str(doc['contact_id'])
 
         return jsonify({"success": True, "trashed_contacts": trashed_docs}), 200
 
     except Exception as e:
-        print(f"An unexpected error occurred while fetching trashed contacts: {e}")
+        print(
+            f"An unexpected error occurred while fetching trashed contacts: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/api/v1/restore_contact/<contact_name>', methods=['POST'])
+@app.route('/api/v1/restore_contact/<contact_id>', methods=['POST'])
 @jwt_required
-async def api_restore_contact(contact_name):
+async def api_restore_contact(contact_id):
     try:
-        await restore_contact_async(g.username, contact_name)
-
-        print(f"Contact '{contact_name}' restored successfully for user '{g.username}'.")
-        return jsonify({"success": True, "message": "Contact restored successfully"}), 200
-
+        success, message = await restore_contact_async(g.username, contact_id)
+        if success:
+            print(
+                f"Contact with _id '{contact_id}' restored successfully for user '{g.username}'.")
+            return jsonify({"success": True, "message": message}), 200
+        else:
+            return jsonify({"error": message}), 404
     except Exception as e:
         print(f"An unexpected error occurred while restoring contact: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/api/v1/delete_permanently/<contact_name>', methods=['DELETE'])
+@app.route('/api/v1/delete_permanently/<contact_id>', methods=['DELETE'])
 @jwt_required
-async def api_delete_permanently(contact_name):
+async def api_delete_permanently(contact_id):
     try:
-        await delete_permanently_async(g.username, contact_name)
-
-        print(f"Contact '{contact_name}' permanently deleted successfully for user '{g.username}'.")
-        return jsonify({"success": True, "message": "Contact permanently deleted successfully"}), 200
-
+        success, message = await delete_permanently_async(g.username, contact_id)
+        if success:
+            print(
+                f"Contact with _id '{contact_id}' permanently deleted successfully for user '{g.username}'.")
+            return jsonify({"success": True, "message": message}), 200
+        else:
+            return jsonify({"error": message}), 404
     except Exception as e:
-        print(f"An unexpected error occurred while permanently deleting contact: {e}")
+        print(
+            f"An unexpected error occurred while permanently deleting contact: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
@@ -502,11 +543,12 @@ async def api_delete_permanently(contact_name):
 @jwt_required
 async def api_empty_trash():
     try:
-        await empty_trash_async(g.username)
-
-        print(f"Trash emptied successfully for user '{g.username}'.")
-        return jsonify({"success": True, "message": "Trash emptied successfully"}), 200
-
+        success, message = await empty_trash_async(g.username)
+        if success:
+            print(f"Trash emptied successfully for user '{g.username}'.")
+            return jsonify({"success": True, "message": message}), 200
+        else:
+            return jsonify({"error": message}), 404
     except Exception as e:
         print(f"An unexpected error occurred while emptying trash: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
@@ -548,9 +590,11 @@ async def api_check_username():
     except Exception as e:
         print(f"Error in check_username API: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
-        
+
+
 @app.route('/api/v1/logout', methods=['POST'])
 @jwt_required
 async def api_logout():
-    print(f"User '{g.username}' logged out successfully by client-side token removal.")
+    print(
+        f"User '{g.username}' logged out successfully by client-side token removal.")
     return jsonify({"success": True, "message": "Logged out successfully"}), 200
