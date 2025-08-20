@@ -200,6 +200,28 @@ async def delete_label_async(username: str, label_name: str):
         print(f"Error deleting label: {e}")
         return False, "An error occurred while deleting the label."
 
+async def edit_the_label_async(username: str, old_label_name: str, new_label_name: str):
+    try:
+        result = await labels_collection.update_one(
+            {"Username": username, "LabelName": old_label_name},
+            {"$set": {"LabelName": new_label_name}}
+        )
+        if result.modified_count == 1:
+            return True, "Label updated successfully."
+        else:
+            return False, "Label not found or no changes made."
+    except Exception as e:
+        print(f"Error updating label: {e}")
+        return False, "An error occurred while updating the label."
+
+async def check_the_label_exists_async(username: str, label_name: str):
+    try:
+        label = await labels_collection.find_one({"Username": username, "LabelName": label_name})
+        return label is not None
+    except Exception as e:
+        print(f"Error checking label existence: {e}")
+        return False
+
 async def move_to_trash_async(username: str, contact_id: str):
     try:
         obj_id = ObjectId(contact_id)
@@ -595,13 +617,17 @@ async def api_create_label():
         label_name = data.get('label_name')
         if not label_name:
             return jsonify({"error": "Missing 'label_name' field"}), 400
-
-        success, message = await create_label_async(g.username, label_name)
-        if success:
-            print(f"Label '{label_name}' created successfully for user '{g.username}'.")
-            return jsonify({"success": True, "message": message}), 201
+        
+        if await check_the_label_exists_async(g.username, label_name):
+            return jsonify({"error": "Label already exists"}), 409
         else:
-            return jsonify({"error": message}), 400
+            success, message = await create_label_async(g.username, label_name)
+            if success:
+                print(f"Label '{label_name}' created successfully for user '{g.username}'.")
+                return jsonify({"success": True, "message": message}), 201
+            else:
+                return jsonify({"error": message}), 400
+
     except Exception as e:
         print(f"An unexpected error occurred while creating label: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
@@ -638,6 +664,30 @@ async def api_delete_label():
             return jsonify({"error": message}), 404
     except Exception as e:
         print(f"An unexpected error occurred while deleting label: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+@app.route('/api/v1/edit_label', methods=['PUT'])
+@jwt_required
+async def api_edit_label():
+    try:
+        data = await request.get_json()
+        old_label_name = data.get('old_label_name')
+        new_label_name = data.get('new_label_name')
+        if not old_label_name or not new_label_name:
+            return jsonify({"error": "Missing 'old_label_name' or 'new_label_name' field"}), 400
+
+        exists = await check_the_label_exists_async(g.username, old_label_name)
+        if not exists:
+            return jsonify({"error": "Label not found"}), 404
+
+        success, message = await edit_the_label_async(g.username, old_label_name, new_label_name)
+        if success:
+            print(f"Label '{old_label_name}' edited successfully for user '{g.username}'.")
+            return jsonify({"success": True, "message": message}), 200
+        else:
+            return jsonify({"error": message}), 400
+    except Exception as e:
+        print(f"An unexpected error occurred while editing label: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.before_serving
