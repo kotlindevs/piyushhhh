@@ -122,7 +122,8 @@ async def get_contact_by_id_async(username: str, contact_id: str):
         print(f"Error getting contact: {e}")
         return None
 
-async def add_contact_async(username, name, mobile, email, job_title, company, label ,datetime):
+
+async def add_contact_async(username, name, mobile, email, job_title, company, labels, datetime):
     try:
         new_contact = {
             "_id": ObjectId(),
@@ -131,7 +132,7 @@ async def add_contact_async(username, name, mobile, email, job_title, company, l
             "Email": email,
             "Job": job_title,
             "Company": company,
-            "Label" : label,
+            "Labels": labels,
             "DateTime": datetime
         }
         await user_contacts_collection.update_one(
@@ -145,7 +146,7 @@ async def add_contact_async(username, name, mobile, email, job_title, company, l
         return False, "An error occurred while adding the contact."
 
 
-async def update_contact_async(username, contact_id, new_name, mobile, email, job_title, company):
+async def update_contact_async(username, contact_id, new_name, mobile, email, job_title, company, labels):
     try:
         obj_id = ObjectId(contact_id)
 
@@ -154,7 +155,8 @@ async def update_contact_async(username, contact_id, new_name, mobile, email, jo
             "Contacts.$.Contact": mobile,
             "Contacts.$.Email": email,
             "Contacts.$.Job": job_title,
-            "Contacts.$.Company": company
+            "Contacts.$.Company": company,
+            "Contacts.$.Labels": labels
         }
 
         result = await user_contacts_collection.update_one(
@@ -170,6 +172,7 @@ async def update_contact_async(username, contact_id, new_name, mobile, email, jo
         print(f"Error updating contact: {e}")
         return False, "An error occurred while updating the contact."
 
+
 async def create_label_async(username: str, label_name: str):
     try:
         new_label = {
@@ -182,6 +185,7 @@ async def create_label_async(username: str, label_name: str):
         print(f"Error creating label: {e}")
         return False, "An error occurred while creating the label."
 
+
 async def get_labels_async(username: str):
     try:
         user_labels = await labels_collection.find({"Username": username}).to_list(length=None)
@@ -189,6 +193,7 @@ async def get_labels_async(username: str):
     except Exception as e:
         print(f"Error getting labels: {e}")
         return []
+
 
 async def delete_label_async(username: str, label_name: str):
     try:
@@ -200,6 +205,7 @@ async def delete_label_async(username: str, label_name: str):
     except Exception as e:
         print(f"Error deleting label: {e}")
         return False, "An error occurred while deleting the label."
+
 
 async def edit_the_label_async(username: str, old_label_name: str, new_label_name: str):
     try:
@@ -215,6 +221,7 @@ async def edit_the_label_async(username: str, old_label_name: str, new_label_nam
         print(f"Error updating label: {e}")
         return False, "An error occurred while updating the label."
 
+
 async def check_the_label_exists_async(username: str, label_name: str):
     try:
         label = await labels_collection.find_one({"Username": username, "LabelName": label_name})
@@ -222,6 +229,7 @@ async def check_the_label_exists_async(username: str, label_name: str):
     except Exception as e:
         print(f"Error checking label existence: {e}")
         return False
+
 
 async def move_to_trash_async(username: str, contact_id: str):
     try:
@@ -448,7 +456,7 @@ async def api_create_contact():
         email = data.get('email')
         job_title = data.get('job_title')
         company = data.get('company')
-        label = data.get('label', [])
+        labels = data.get('labels', [])
         dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         if not name or not isinstance(name, str) or len(name.strip()) == 0:
@@ -464,7 +472,7 @@ async def api_create_contact():
             email,
             job_title,
             company,
-            label,
+            labels,
             dt
         )
         print(
@@ -480,63 +488,50 @@ async def api_create_contact():
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/api/v1/edit_contact/<contact_id>', methods=['GET', 'PUT'])
+@app.route('/api/v1/edit_contact/<contact_id>', methods=['PUT'])
 @jwt_required
 async def api_edit_contact(contact_id):
-    if request.method == 'GET':
-        try:
-            contact = await get_contact_by_id_async(g.username, contact_id)
-            if contact:
-                # Convert ObjectId to string for JSON serialization
-                if '_id' in contact and contact['_id']:
-                    contact['_id'] = str(contact['_id'])
-                return jsonify({"success": True, "contact": contact}), 200
-            else:
-                return jsonify({"error": "Contact not found"}), 404
-        except Exception as e:
-            print(f"An unexpected error occurred while fetching contact: {e}")
-            return jsonify({"error": "An internal server error occurred."}), 500
+    try:
+        data = await request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid request body, expected JSON"}), 400
 
-    elif request.method == 'PUT':
-        try:
-            data = await request.get_json()
-            if not data:
-                return jsonify({"error": "Invalid request body, expected JSON"}), 400
+        fname = data.get('fname')
+        lname = data.get('lname')
+        mobile = data.get('mobile')
+        email = data.get('email')
+        job_title = data.get('job_title')
+        company = data.get('company')
+        labels = data.get('labels', [])
 
-            fname = data.get('fname')
-            lname = data.get('lname')
-            mobile = data.get('mobile')
-            email = data.get('email')
-            job_title = data.get('job_title')
-            company = data.get('company')
+        if not fname or not mobile:
+            return jsonify({"error": "First name and Mobile are required fields."}), 400
 
-            if not fname or not mobile:
-                return jsonify({"error": "First name and Mobile are required fields."}), 400
+        if not isinstance(mobile, str) or not mobile.isdigit():
+            return jsonify({"error": "Mobile number must be a string of digits."}), 400
 
-            if not isinstance(mobile, str) or not mobile.isdigit():
-                return jsonify({"error": "Mobile number must be a string of digits."}), 400
+        new_name = f"{fname} {lname}" if lname else fname
 
-            new_name = f"{fname} {lname}" if lname else fname
+        success, message = await update_contact_async(
+            g.username,
+            contact_id,
+            new_name,
+            mobile,
+            email,
+            job_title,
+            company,
+            labels
+        )
+        if success:
+            print(
+                f"Contact with ID '{contact_id}' updated to '{new_name}' successfully.")
+            return jsonify({"success": True, "message": message}), 200
+        else:
+            return jsonify({"error": message}), 404
 
-            success, message = await update_contact_async(
-                g.username,
-                contact_id,
-                new_name,
-                mobile,
-                email,
-                job_title,
-                company
-            )
-            if success:
-                print(
-                    f"Contact with ID '{contact_id}' updated to '{new_name}' successfully.")
-                return jsonify({"success": True, "message": message}), 200
-            else:
-                return jsonify({"error": message}), 404
-
-        except Exception as e:
-            print(f"An unexpected error occurred while editing contact: {e}")
-            return jsonify({"error": "An internal server error occurred."}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred while editing contact: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 
 @app.route('/api/v1/remove_contact/<contact_id>', methods=['DELETE'])
@@ -614,6 +609,7 @@ async def api_empty_trash():
         print(f"An unexpected error occurred while emptying trash: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
+
 @app.route('/api/v1/create_label', methods=['POST'])
 @jwt_required
 async def api_create_label():
@@ -622,13 +618,14 @@ async def api_create_label():
         label_name = data.get('label_name')
         if not label_name:
             return jsonify({"error": "Missing 'label_name' field"}), 400
-        
+
         if await check_the_label_exists_async(g.username, label_name):
             return jsonify({"error": "Label already exists"}), 409
         else:
             success, message = await create_label_async(g.username, label_name)
             if success:
-                print(f"Label '{label_name}' created successfully for user '{g.username}'.")
+                print(
+                    f"Label '{label_name}' created successfully for user '{g.username}'.")
                 return jsonify({"success": True, "message": message}), 201
             else:
                 return jsonify({"error": message}), 400
@@ -636,6 +633,7 @@ async def api_create_label():
     except Exception as e:
         print(f"An unexpected error occurred while creating label: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
+
 
 @app.route('/api/v1/get_labels', methods=['GET'])
 @jwt_required
@@ -651,6 +649,7 @@ async def api_get_labels():
     except Exception as e:
         print(f"An unexpected error occurred while fetching labels: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
+
 
 @app.route('/api/v1/contacts/import_csv', methods=['POST'])
 @jwt_required
@@ -671,13 +670,14 @@ async def import_contacts_from_json():
             job_title = contact.get('job_title')
             company = contact.get('company')
 
-            
             if not name or not isinstance(name, str) or len(name.strip()) == 0:
-                failed_contacts.append({'contact': contact, 'reason': "Missing or invalid 'name'"})
+                failed_contacts.append(
+                    {'contact': contact, 'reason': "Missing or invalid 'name'"})
                 continue
-            
+
             if not mobile or not isinstance(mobile, str) or not mobile.isdigit():
-                failed_contacts.append({'contact': contact, 'reason': "Missing or invalid 'mobile'"})
+                failed_contacts.append(
+                    {'contact': contact, 'reason': "Missing or invalid 'mobile'"})
                 continue
 
             success, message = await add_contact_async(
@@ -687,7 +687,9 @@ async def import_contacts_from_json():
                 email,
                 job_title,
                 company,
-                datetime=datetime.datetime.now(datetime.timezone.utc).isoformat()
+                labels=[],
+                datetime=datetime.datetime.now(
+                    datetime.timezone.utc).isoformat()
             )
             if success:
                 success_count += 1
@@ -701,7 +703,7 @@ async def import_contacts_from_json():
                 "total_contacts_attempted": len(contacts_to_add),
                 "failed_contacts": failed_contacts
             }), 400
-        
+
         return jsonify({
             "success": True,
             "message": f"Successfully imported {success_count} contacts."
@@ -710,6 +712,7 @@ async def import_contacts_from_json():
     except Exception as e:
         print(f"Error processing contacts import: {e}")
         return jsonify({"success": False, "error": "An internal server error occurred."}), 500
+
 
 @app.route('/api/v1/delete_label', methods=['DELETE'])
 @jwt_required
@@ -722,13 +725,15 @@ async def api_delete_label():
 
         success, message = await delete_label_async(g.username, label_name)
         if success:
-            print(f"Label '{label_name}' deleted successfully for user '{g.username}'.")
+            print(
+                f"Label '{label_name}' deleted successfully for user '{g.username}'.")
             return jsonify({"success": True, "message": message}), 200
         else:
             return jsonify({"error": message}), 404
     except Exception as e:
         print(f"An unexpected error occurred while deleting label: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
+
 
 @app.route('/api/v1/edit_label', methods=['PUT'])
 @jwt_required
@@ -746,13 +751,15 @@ async def api_edit_label():
 
         success, message = await edit_the_label_async(g.username, old_label_name, new_label_name)
         if success:
-            print(f"Label '{old_label_name}' edited successfully for user '{g.username}'.")
+            print(
+                f"Label '{old_label_name}' edited successfully for user '{g.username}'.")
             return jsonify({"success": True, "message": message}), 200
         else:
             return jsonify({"error": message}), 400
     except Exception as e:
         print(f"An unexpected error occurred while editing label: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
+
 
 @app.before_serving
 async def initialize_db():
