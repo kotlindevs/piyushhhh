@@ -20,7 +20,7 @@ app = cors(
 )
 
 app.config['JWT_SECRET_KEY'] = secrets.token_urlsafe(32)
-app.config['JWT_EXPIRATION_DELTA'] = datetime.timedelta(hours=168)
+app.config['JWT_EXPIRATION_DELTA'] = datetime.timedelta(hours=24)
 
 uname = parser.quote_plus("Rajat")
 passwd = parser.quote_plus("2844")
