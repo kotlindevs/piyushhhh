@@ -488,50 +488,64 @@ async def api_create_contact():
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
-@app.route('/api/v1/edit_contact/<contact_id>', methods=['PUT'])
+@app.route('/api/v1/edit_contact/<contact_id>', methods=['GET', 'PUT'])
 @jwt_required
 async def api_edit_contact(contact_id):
-    try:
-        data = await request.get_json()
-        if not data:
-            return jsonify({"error": "Invalid request body, expected JSON"}), 400
+    if request.method == 'GET':
+        try:
+            contact = await get_contact_by_id_async(g.username, contact_id)
+            if contact:
+                if '_id' in contact and contact['_id']:
+                    contact['_id'] = str(contact['_id'])
+                return jsonify({"success": True, "contact": contact}), 200
+            else:
+                return jsonify({"error": "Contact not found"}), 404
+        except Exception as e:
+            print(f"An unexpected error occurred while fetching contact: {e}")
+            return jsonify({"error": "An internal server error occurred."}), 500
 
-        fname = data.get('fname')
-        lname = data.get('lname')
-        mobile = data.get('mobile')
-        email = data.get('email')
-        job_title = data.get('job_title')
-        company = data.get('company')
-        labels = data.get('labels', [])
+    elif request.method == 'PUT':
+        try:
+            data = await request.get_json()
+            if not data:
+                return jsonify({"error": "Invalid request body, expected JSON"}), 400
 
-        if not fname or not mobile:
-            return jsonify({"error": "First name and Mobile are required fields."}), 400
+            fname = data.get('fname')
+            lname = data.get('lname')
+            mobile = data.get('mobile')
+            email = data.get('email')
+            job_title = data.get('job_title')
+            company = data.get('company')
+            labels = data.get('labels', [])
 
-        if not isinstance(mobile, str) or not mobile.isdigit():
-            return jsonify({"error": "Mobile number must be a string of digits."}), 400
+            if not fname or not mobile:
+                return jsonify({"error": "First name and Mobile are required fields."}), 400
 
-        new_name = f"{fname} {lname}" if lname else fname
+            if not isinstance(mobile, str) or not mobile.isdigit():
+                return jsonify({"error": "Mobile number must be a string of digits."}), 400
 
-        success, message = await update_contact_async(
-            g.username,
-            contact_id,
-            new_name,
-            mobile,
-            email,
-            job_title,
-            company,
-            labels
-        )
-        if success:
-            print(
-                f"Contact with ID '{contact_id}' updated to '{new_name}' successfully.")
-            return jsonify({"success": True, "message": message}), 200
-        else:
-            return jsonify({"error": message}), 404
+            new_name = f"{fname} {lname}" if lname else fname
 
-    except Exception as e:
-        print(f"An unexpected error occurred while editing contact: {e}")
-        return jsonify({"error": "An internal server error occurred."}), 500
+            success, message = await update_contact_async(
+                g.username,
+                contact_id,
+                new_name,
+                mobile,
+                email,
+                job_title,
+                company,
+                labels
+            )
+            if success:
+                print(
+                    f"Contact with ID '{contact_id}' updated to '{new_name}' successfully.")
+                return jsonify({"success": True, "message": message}), 200
+            else:
+                return jsonify({"error": message}), 404
+
+        except Exception as e:
+            print(f"An unexpected error occurred while editing contact: {e}")
+            return jsonify({"error": "An internal server error occurred."}), 500
 
 
 @app.route('/api/v1/remove_contact/<contact_id>', methods=['DELETE'])
