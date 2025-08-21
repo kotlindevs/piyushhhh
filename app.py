@@ -122,6 +122,14 @@ async def get_contact_by_id_async(username: str, contact_id: str):
         print(f"Error getting contact: {e}")
         return None
 
+async def add_contacts_from_csv(username: str, contacts: list):
+    try:
+        for contact in contacts:
+            await add_contact_async(username, **contact)
+        return True, "Contacts added successfully."
+    except Exception as e:
+        print(f"Error adding contacts from CSV: {e}")
+        return False, "An error occurred while adding contacts."
 
 async def add_contact_async(username, name, mobile, email, job_title, company, datetime):
     try:
@@ -649,6 +657,25 @@ async def api_get_labels():
     except Exception as e:
         print(f"An unexpected error occurred while fetching labels: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
+
+@app.route('/api/v1/add_contacts/<contacts>', methods=['POST'])
+@jwt_required
+async def api_add_contacts_csv(contacts : list):
+    try:
+        if not contacts or not isinstance(contacts, list):
+            return jsonify({"error": "Invalid contacts data provided"}), 400
+
+        success, message = await add_contacts_from_csv(g.username, contacts)
+        if success:
+            print(f"Contacts added successfully for user '{g.username}'.")
+            return jsonify({"success": True, "message": message}), 201
+        else:
+            return jsonify({"error": message}), 500
+
+    except Exception as e:
+        print(f"An unexpected error occurred while adding contacts from CSV: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
 
 @app.route('/api/v1/delete_label', methods=['DELETE'])
 @jwt_required
