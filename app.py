@@ -516,7 +516,7 @@ async def api_edit_contact(contact_id):
             email = data.get('email')
             job_title = data.get('job_title')
             company = data.get('company')
-            labels = data.get('labels', [])
+            labels = data.get('labels')
 
             if not fname or not mobile:
                 return jsonify({"error": "First name and Mobile are required fields."}), 400
