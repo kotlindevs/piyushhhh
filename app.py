@@ -122,7 +122,7 @@ async def get_contact_by_id_async(username: str, contact_id: str):
         print(f"Error getting contact: {e}")
         return None
 
-async def add_contact_async(username, name, mobile, email, job_title, company, datetime):
+async def add_contact_async(username, name, mobile, email, job_title, company, label ,datetime):
     try:
         new_contact = {
             "_id": ObjectId(),
@@ -131,6 +131,7 @@ async def add_contact_async(username, name, mobile, email, job_title, company, d
             "Email": email,
             "Job": job_title,
             "Company": company,
+            "Label" : label,
             "DateTime": datetime
         }
         await user_contacts_collection.update_one(
@@ -447,6 +448,7 @@ async def api_create_contact():
         email = data.get('email')
         job_title = data.get('job_title')
         company = data.get('company')
+        label = data.get('label', [])
         dt = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         if not name or not isinstance(name, str) or len(name.strip()) == 0:
@@ -462,6 +464,7 @@ async def api_create_contact():
             email,
             job_title,
             company,
+            label,
             dt
         )
         print(
