@@ -140,10 +140,10 @@ async def add_contact_async(username, name, mobile, email, job_title, company, l
             {"$push": {"Contacts": new_contact}},
             upsert=True
         )
-        return True, "Contact added successfully."
+        return True, "Contact added successfully.", new_contact
     except Exception as e:
         print(f"Error adding contact: {e}")
-        return False, "An error occurred while adding the contact."
+        return False, "An error occurred while adding the contact.", None
 
 
 async def update_contact_async(username, contact_id, new_name, mobile, email, job_title, company, labels):
@@ -269,6 +269,90 @@ async def move_to_trash_async(username: str, contact_id: str):
         print(f"Error moving contact to trash: {e}")
         return False, "An error occurred while moving the contact to trash."
 
+async def delete_contacts_by_ids_async(username: str, contact_ids: list):
+    try:
+        await user_contacts_collection.update_one(
+            {"Username": username},
+            {"$pull": {"Contacts": {"_id": {"$in": contact_ids}}}}
+        )
+        return True, "Contacts deleted successfully.", None
+    except Exception as e:
+        print(f"Error deleting contacts: {e}")
+        return False, "An error occurred while deleting contacts.", None
+
+async def merge_contacts_async(username: str, contact_ids: list):
+    if not isinstance(contact_ids, list) or len(contact_ids) < 2:
+        # All return statements now consistently return 3 values
+        return False, "A list of at least two contact IDs is required to merge.", None
+
+    merged_name = None
+    merged_mobile = None
+    merged_email = None
+    merged_job = None
+    merged_company = None
+    merged_labels = set()
+    
+    contacts_to_delete_ids = []
+    
+    for cid in contact_ids:
+        # Check if the item is a dictionary (from client-side objects) or a string (from simple IDs)
+        if isinstance(cid, dict):
+            contact_id_str = str(cid.get('_id'))
+        elif isinstance(cid, str):
+            contact_id_str = cid
+        else:
+            # All return statements now consistently return 3 values
+            return False, f"Invalid contact ID format: '{cid}'", None
+
+        try:
+            contact = await get_contact_by_id_async(username, contact_id_str)
+            
+            if not contact:
+                # All return statements now consistently return 3 values
+                return False, f"Contact with ID '{contact_id_str}' not found.", None
+            
+            contacts_to_delete_ids.append(contact.get("_id"))
+            
+            # Merge fields, prioritizing the first non-empty value
+            if not merged_name:
+                merged_name = contact.get("Name")
+            if not merged_mobile:
+                merged_mobile = contact.get("Contact")
+            if not merged_email:
+                merged_email = contact.get("Email")
+            if not merged_job:
+                merged_job = contact.get("Job")
+            if not merged_company:
+                merged_company = contact.get("Company")
+            
+            # Combine all labels
+            for label in contact.get("Labels", []):
+                merged_labels.add(label)
+                
+        except Exception:
+            # All return statements now consistently return 3 values
+            return False, f"Invalid contact ID format: '{contact_id_str}'", None
+            
+    # Add the new merged contact
+    success, message, new_contact = await add_contact_async(
+        username,
+        merged_name,
+        merged_mobile,
+        merged_email,
+        merged_job,
+        merged_company,
+        list(merged_labels),
+        datetime=datetime.datetime.now(datetime.timezone.utc).isoformat()
+    )
+    
+    if success:
+        # Delete the original contacts
+        await delete_contacts_by_ids_async(username, contacts_to_delete_ids)
+        if new_contact and '_id' in new_contact:
+            new_contact['_id'] = str(new_contact['_id'])
+        return True, "Contacts merged successfully.", new_contact
+    else:
+        return False, message, None
 
 async def get_trashed_contacts_async(username: str):
     try:
@@ -547,6 +631,26 @@ async def api_edit_contact(contact_id):
             print(f"An unexpected error occurred while editing contact: {e}")
             return jsonify({"error": "An internal server error occurred."}), 500
 
+@app.route('/api/v1/merge_contacts', methods=['POST'])
+@jwt_required
+async def api_merge_contacts():
+    try:
+        data = await request.get_json()
+        contact_ids = data.get('contact_ids')
+
+        success, message, merged_contact = await merge_contacts_async(g.username, contact_ids)
+        if success:
+            print(f"Contacts '{contact_ids}' merged successfully for user '{g.username}'.")
+            return jsonify({
+                "success": True,
+                "message": message,
+                "contact": merged_contact
+            }), 201
+        else:
+            return jsonify({"success": False, "error": message}), 400
+    except Exception as e:
+        print(f"An unexpected error occurred while merging contacts: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.route('/api/v1/remove_contact/<contact_id>', methods=['DELETE'])
 @jwt_required
