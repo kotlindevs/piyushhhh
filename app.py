@@ -631,6 +631,25 @@ async def api_edit_contact(contact_id):
             print(f"An unexpected error occurred while editing contact: {e}")
             return jsonify({"error": "An internal server error occurred."}), 500
 
+@app.route('/api/v1/contact/<contact_id>', methods=['GET'])
+@jwt_required
+async def api_get_contact(contact_id):
+    """
+    Retrieves a single contact by its unique _id.
+    """
+    try:
+        contact = await get_contact_by_id_async(g.username, contact_id)
+        if not contact:
+            return jsonify({"error": "Contact not found"}), 404
+
+        # Convert ObjectId to string for JSON serialization
+        contact['_id'] = str(contact['_id'])
+        return jsonify({"success": True, "contact": contact}), 200
+
+    except Exception as e:
+        print(f"An unexpected error occurred while fetching contact: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
 @app.route('/api/v1/merge_contacts', methods=['POST'])
 @jwt_required
 async def api_merge_contacts():
