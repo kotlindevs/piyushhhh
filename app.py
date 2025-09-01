@@ -8,6 +8,7 @@ import secrets
 import datetime
 import jwt
 from functools import wraps
+import json
 
 app = Quart(__name__)
 app = cors(
@@ -96,6 +97,25 @@ async def validate_user_async(username: str, password: str) -> bool:
     except Exception as e:
         print(f"Error while validating user: {e}")
         return False
+
+
+async def update_user_async(username: str, name: str, mobile: str):
+    try:
+        update_fields = {"Name": name}
+        if mobile:
+            update_fields["Contact"] = mobile
+
+        result = await accounts.update_one(
+            {"Username": username},
+            {"$set": update_fields}
+        )
+        if result.modified_count == 1:
+            return True, "Profile updated successfully."
+        else:
+            return False, "User not found or no changes made."
+    except Exception as e:
+        print(f"Error updating user profile: {e}")
+        return False, "An unexpected error occurred while updating the profile."
 
 
 async def get_contacts_async(username: str):
@@ -269,6 +289,7 @@ async def move_to_trash_async(username: str, contact_id: str):
         print(f"Error moving contact to trash: {e}")
         return False, "An error occurred while moving the contact to trash."
 
+
 async def delete_contacts_by_ids_async(username: str, contact_ids: list):
     try:
         await user_contacts_collection.update_one(
@@ -279,6 +300,7 @@ async def delete_contacts_by_ids_async(username: str, contact_ids: list):
     except Exception as e:
         print(f"Error deleting contacts: {e}")
         return False, "An error occurred while deleting contacts.", None
+
 
 async def merge_contacts_async(username: str, contact_ids: list):
     if not isinstance(contact_ids, list) or len(contact_ids) < 2:
@@ -425,6 +447,34 @@ async def empty_trash_async(username: str):
         return False, "An error occurred while emptying the trash."
 
 
+async def search_contacts_async(username: str, query: str):
+    try:
+        contacts_list = await get_contacts_async(username)
+        search_results = [
+            contact for contact in contacts_list
+            if query.lower() in contact.get("Name", "").lower()
+            or query.lower() in contact.get("Contact", "").lower()
+            or query.lower() in contact.get("Email", "").lower()
+            or any(query.lower() in label.lower() for label in contact.get("Labels", []))
+        ]
+        return search_results
+    except Exception as e:
+        print(f"Error searching contacts: {e}")
+        return []
+
+
+async def export_contacts_async(username: str):
+    try:
+        contacts = await get_contacts_async(username)
+        for contact in contacts:
+            if '_id' in contact:
+                contact['_id'] = str(contact['_id'])
+        return True, contacts, None
+    except Exception as e:
+        print(f"Error exporting contacts: {e}")
+        return False, None, "An error occurred while exporting contacts."
+
+
 @app.route('/')
 async def index():
     return jsonify({"message": "Welcome to the Contacts API!"})
@@ -485,6 +535,52 @@ async def api_login():
         return jsonify({"success": False, "error": "An internal server error occurred."}), 500
 
 
+@app.route('/api/v1/user', methods=['GET'])
+@jwt_required
+async def api_get_user_profile():
+    try:
+        user = await accounts.find_one({"Username": g.username})
+        if user:
+            user_info = {
+                "name": user.get("Name"),
+                "username": user.get("Username"),
+                "mobile": user.get("Contact")
+            }
+            return jsonify({"success": True, "user": user_info}), 200
+        else:
+            return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        print(f"Error fetching user profile: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+
+@app.route('/api/v1/user/update', methods=['PUT'])
+@jwt_required
+async def api_update_user_profile():
+    try:
+        data = await request.get_json()
+        name = data.get('name')
+        mobile = data.get('mobile')
+
+        if not name:
+            return jsonify({"error": "Name is a required field."}), 400
+
+        success, message = await update_user_async(g.username, name, mobile)
+        if success:
+            updated_user = await accounts.find_one({"Username": g.username})
+            user_info = {
+                "name": updated_user.get("Name"),
+                "username": updated_user.get("Username"),
+                "mobile": updated_user.get("Contact")
+            }
+            return jsonify({"success": True, "message": message, "user": user_info}), 200
+        else:
+            return jsonify({"error": message}), 404
+    except Exception as e:
+        print(f"Error in update user profile API: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+
 @app.route('/api/v1/contacts', methods=['GET'])
 @jwt_required
 async def api_contacts():
@@ -504,25 +600,6 @@ async def api_contacts():
 
     except Exception as e:
         print(f"Error fetching contacts in API: {e}")
-        return jsonify({"error": "An internal server error occurred."}), 500
-
-
-@app.route('/api/v1/user', methods=['GET'])
-@jwt_required
-async def api_get_user_profile():
-    try:
-        user = await accounts.find_one({"Username": g.username})
-        if user:
-            user_info = {
-                "name": user.get("Name"),
-                "username": user.get("Username"),
-                "mobile": user.get("Contact")
-            }
-            return jsonify({"success": True, "user": user_info}), 200
-        else:
-            return jsonify({"error": "User not found"}), 404
-    except Exception as e:
-        print(f"Error fetching user profile: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
@@ -895,6 +972,54 @@ async def api_edit_label():
             return jsonify({"error": message}), 400
     except Exception as e:
         print(f"An unexpected error occurred while editing label: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+
+@app.route('/api/v1/contacts/search', methods=['GET'])
+@jwt_required
+async def api_search_contacts():
+    try:
+        query = request.args.get('query', '')
+        if not query:
+            return jsonify({"error": "Missing search query parameter 'query'"}), 400
+
+        search_results = await search_contacts_async(g.username, query)
+        
+        # Convert ObjectId to string for JSON serialization
+        for contact in search_results:
+            if '_id' in contact:
+                contact['_id'] = str(contact['_id'])
+                
+        return jsonify({"success": True, "contacts": search_results}), 200
+        
+    except Exception as e:
+        print(f"Error in contacts search API: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+
+@app.route('/api/v1/contacts/export', methods=['GET'])
+@jwt_required
+async def api_export_contacts():
+    try:
+        success, data, error_message = await export_contacts_async(g.username)
+        if not success:
+            return jsonify({"success": False, "error": error_message}), 500
+
+        # Create a JSON file content
+        json_content = json.dumps(data, indent=2)
+
+        # Create a response with a JSON file
+        response = Response(
+            json_content,
+            mimetype='application/json',
+            headers={
+                'Content-Disposition': 'attachment;filename=contacts.json'
+            }
+        )
+        return response
+
+    except Exception as e:
+        print(f"Error in contacts export API: {e}")
         return jsonify({"error": "An internal server error occurred."}), 500
 
 
