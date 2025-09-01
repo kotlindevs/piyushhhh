@@ -108,7 +108,7 @@ async def update_user_async(username: str, image:str, name: str, mobile: str):
 
         if image:
             update_fields["Photo"] = image
-            
+
         result = await accounts.update_one(
             {"Username": username},
             {"$set": update_fields}
@@ -565,19 +565,23 @@ async def api_get_user_profile():
 async def api_update_user_profile():
     try:
         data = await request.get_json()
+        image = data.get('image')
         name = data.get('name')
         mobile = data.get('mobile')
 
         if not name:
             return jsonify({"error": "Name is a required field."}), 400
 
-        success, message = await update_user_async(g.username, name, mobile)
+        success, message = await update_user_async(
+            username=g.username, image=image, name=name, mobile=mobile
+        )
         if success:
             updated_user = await accounts.find_one({"Username": g.username})
             user_info = {
                 "name": updated_user.get("Name"),
                 "username": updated_user.get("Username"),
-                "mobile": updated_user.get("Contact")
+                "mobile": updated_user.get("Contact"),
+                "photo" : updated_user.get("Photo")
             }
             return jsonify({"success": True, "message": message, "user": user_info}), 200
         else:
