@@ -143,10 +143,11 @@ async def get_contact_by_id_async(username: str, contact_id: str):
         return None
 
 
-async def add_contact_async(username, name, mobile, email, job_title, company, labels, datetime):
+async def add_contact_async(username,image, name, mobile, email, job_title, company, labels, datetime):
     try:
         new_contact = {
             "_id": ObjectId(),
+            "Photo": image,
             "Name": name,
             "Contact": mobile,
             "Email": email,
@@ -611,7 +612,8 @@ async def api_create_contact():
         if not data:
             print("Invalid JSON body received.")
             return jsonify({"error": "Invalid request body, expected JSON"}), 400
-
+        
+        image = data.get('image')
         name = data.get('name')
         mobile = data.get('mobile')
         email = data.get('email')
@@ -628,6 +630,7 @@ async def api_create_contact():
 
         await add_contact_async(
             g.username,
+            image,
             name,
             mobile,
             email,
