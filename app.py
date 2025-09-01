@@ -548,6 +548,7 @@ async def api_get_user_profile():
         user = await accounts.find_one({"Username": g.username})
         if user:
             user_info = {
+                "photo": user.get("Photo"),
                 "name": user.get("Name"),
                 "username": user.get("Username"),
                 "mobile": user.get("Contact")
