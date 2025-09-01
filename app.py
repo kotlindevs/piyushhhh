@@ -71,11 +71,12 @@ async def check_user_async(username: str) -> bool:
         return False
 
 
-async def create_user_async(name: str, username: str, password: str, mobile: str):
+async def create_user_async(image:str, name: str, username: str, password: str, mobile: str):
     try:
         hashed_password = bcrypt.hashpw(
             password.encode('utf-8'), bcrypt.gensalt())
         user = {
+            "Photo" : image,
             "Name": name,
             "Username": username,
             "Password": hashed_password,
@@ -99,12 +100,15 @@ async def validate_user_async(username: str, password: str) -> bool:
         return False
 
 
-async def update_user_async(username: str, name: str, mobile: str):
+async def update_user_async(username: str, image:str, name: str, mobile: str):
     try:
         update_fields = {"Name": name}
         if mobile:
             update_fields["Contact"] = mobile
 
+        if image:
+            update_fields["Photo"] = image
+            
         result = await accounts.update_one(
             {"Username": username},
             {"$set": update_fields}
@@ -485,6 +489,7 @@ async def index():
 async def api_register():
     try:
         data = await request.get_json()
+        image = data.get('image')
         name = data.get('name')
         username = data.get('username')
         password = data.get('password')
@@ -496,7 +501,7 @@ async def api_register():
         if await check_user_async(username):
             return jsonify({"error": "Username already exists. Please choose a different one."}), 409
 
-        success, message = await create_user_async(name, username, password, mobile)
+        success, message = await create_user_async(image, name, username, password, mobile)
 
         if success:
             return jsonify({"success": True, "message": "User registered successfully."}), 201
